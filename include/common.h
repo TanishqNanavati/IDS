@@ -1,5 +1,3 @@
-// For logging utilities 
-
 #ifndef COMMON_H
 #define COMMON_H
 
@@ -16,28 +14,21 @@ typedef enum{
     INFO = 1,
     WARN = 2,
     ERROR = 3
-}log;
+}LogLevel;
 
-extern log global_log;    // to keep track of global logging
+extern LogLevel global_log;
 
-void log_init(log l);     // initializing logger function
-
-void log_msg(log l,const char* fmt,...);     // to log message along with timestamp
-
+void log_init(LogLevel l);
+void log_msg(LogLevel l,const char* fmt,...);
 
 #define log_debug(fmt,...) log_msg(DEBUG,fmt,##__VA_ARGS__)
 #define log_info(fmt,...) log_msg(INFO,fmt,##__VA_ARGS__)
 #define log_warn(fmt,...) log_msg(WARN,fmt,##__VA_ARGS__)
 #define log_error(fmt,...) log_msg(ERROR,fmt,##__VA_ARGS__)
 
-
-// network interface statistics
-
 typedef struct{
 
-    char interface[16];   // eth0,lo,wlan0     
-    // recv --> received
-    // tr   --> transmitted
+    char interface[16];
     unsigned long recv_bytes;
     unsigned long recv_pkts;
     unsigned long recv_errors;
@@ -50,9 +41,9 @@ typedef struct{
 
 typedef struct{
 
-    NetStats *interfaces;      // pointer to array of interfaces
-    int count;                 // No of interfaces
-    time_t timestamp;          // defines the time when particular snapshot is taken
+    NetStats *interfaces;
+    int count;
+    time_t timestamp;
 
 }Network_Snapshot;
 

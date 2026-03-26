@@ -15,6 +15,7 @@ set(SOURCES
     src/common.c
     src/parser.c
     src/net_reader.c
+    src/rate.c
     main.c
 )
 

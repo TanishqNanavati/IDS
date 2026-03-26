@@ -1,0 +1,176 @@
+#include"rate.h"
+#include<math.h>
+
+static inline double calculate_rate(unsigned long prev,unsigned long curr,double time_delta){
+    if(time_delta <= 0) return 0.0;
+    long delta = (long)(curr - prev);
+    if(delta < 0){
+        log_warn("Counter wraparound detected: %lu -> %lu", prev, curr);
+        return 0.0;
+    }
+    return (double)delta / time_delta;
+}
+
+static int find_interface(const Network_Snapshot *snap,const char *name){
+    if(!snap || !name) return -1;
+    for(int i=0;i<snap->count;i++)
+        if(strcmp(snap->interfaces[i].interface,name) == 0)
+            return i;
+    return -1;
+}
+
+/* ---------- NEW helper ---------- */
+static char *format_bytes(double bytes, char *buf, size_t size)
+{
+    const char *units[] = {"B/s","KB/s","MB/s","GB/s"};
+    int unit = 0;
+
+    while(bytes > 1024 && unit < 3){
+        bytes /= 1024;
+        unit++;
+    }
+
+    snprintf(buf,size,"%.2f %s",bytes,units[unit]);
+    return buf;
+}
+/* -------------------------------- */
+
+RateSnapShot *create_rate_snapshot(void){
+    RateSnapShot *snap = malloc(sizeof(RateSnapShot));
+    if (!snap) {
+        log_error("Failed to allocate RateSnapshot");
+        return NULL;
+    }
+
+    snap->interfaces = NULL;
+    snap->count = 0;
+    snap->timestamp = time(NULL);
+    snap->time_delta = 0.0;
+    return snap;
+}
+
+RateSnapShot *calculate_rates(const Network_Snapshot *prev,const Network_Snapshot *curr,double time_delta){
+    if(!prev || !curr){
+        log_error("Previous and current snapshots cannot be NULL");
+        return NULL;
+    }
+
+    RateSnapShot *rate_snapshot = create_rate_snapshot();
+    if(!rate_snapshot) return NULL;
+
+    rate_snapshot->interfaces = calloc(curr->count,sizeof(RateStats));
+    if(!rate_snapshot->interfaces){
+        destroy_rate_snapshot(rate_snapshot);
+        return NULL;
+    }
+
+    rate_snapshot->count = curr->count;
+    rate_snapshot->time_delta = time_delta;
+
+    for(int i=0;i<curr->count;i++){
+        RateStats *rate = &rate_snapshot->interfaces[i];
+        const NetStats *curr_stats = &curr->interfaces[i];
+
+        strncpy(rate->interface,curr_stats->interface,sizeof(rate->interface)-1);
+
+        rate->recv_bytes = curr_stats->recv_bytes;
+        rate->recv_pkts = curr_stats->recv_pkts;
+        rate->tr_bytes = curr_stats->tr_bytes;
+        rate->tr_pkts = curr_stats->tr_pkts;
+
+        int prev_idx = find_interface(prev, curr_stats->interface);
+        if(prev_idx < 0) continue;
+
+        const NetStats *prev_stats = &prev->interfaces[prev_idx];
+
+        rate->recv_bytes_per_sec =
+            calculate_rate(prev_stats->recv_bytes,curr_stats->recv_bytes,time_delta);
+
+        rate->recv_pkts_per_sec =
+            calculate_rate(prev_stats->recv_pkts,curr_stats->recv_pkts,time_delta);
+
+        rate->recv_errors_per_sec =
+            calculate_rate(prev_stats->recv_errors,curr_stats->recv_errors,time_delta);
+
+        rate->recv_dropped_per_sec =
+            calculate_rate(prev_stats->recv_dropped,curr_stats->recv_dropped,time_delta);
+
+        rate->tr_bytes_per_sec =
+            calculate_rate(prev_stats->tr_bytes,curr_stats->tr_bytes,time_delta);
+
+        rate->tr_pkts_per_sec =
+            calculate_rate(prev_stats->tr_pkts,curr_stats->tr_pkts,time_delta);
+
+        rate->tr_errors_per_sec =
+            calculate_rate(prev_stats->tr_errors,curr_stats->tr_errors,time_delta);
+
+        rate->tr_dropped_per_sec =
+            calculate_rate(prev_stats->tr_dropped,curr_stats->tr_dropped,time_delta);
+    }
+
+    return rate_snapshot;
+}
+
+void print_rate_snapshot(const RateSnapShot *snap)
+{
+    if (!snap) return;
+
+    printf("\n====================================\n");
+    printf("Network Rates (%d interfaces, %.1f sec delta)\n",
+           snap->count, snap->time_delta);
+    printf("====================================\n");
+
+    for (int i = 0; i < snap->count; i++) {
+        const RateStats *rate = &snap->interfaces[i];
+        char buf[32];
+
+        printf("\n[%d] %s\n", i + 1, rate->interface);
+        printf("    RX Bytes:   %s", format_bytes(rate->recv_bytes_per_sec, buf, sizeof(buf)));
+        printf("  TX Bytes:   %s\n", format_bytes(rate->tr_bytes_per_sec, buf, sizeof(buf)));
+
+        printf("    RX Pkts: %.2f pps  TX Pkts: %.2f pps\n",
+               rate->recv_pkts_per_sec, rate->tr_pkts_per_sec);
+    }
+
+    printf("\n====================================\n");
+}
+
+void log_rate_snapshot(FILE *fp,const RateSnapShot *snap)
+{
+    if (!fp || !snap) return;
+
+    fprintf(fp,"==== Rates (delta=%.1fs) ====\n",snap->time_delta);
+
+    for(int i=0;i<snap->count;i++){
+        const RateStats *rate = &snap->interfaces[i];
+
+        fprintf(fp,
+            "%s RX_B/s:%.2f TX_B/s:%.2f "
+            "RX_pps:%.2f TX_pps:%.2f "
+            "RX_err:%.2f TX_err:%.2f "
+            "RX_drp:%.2f TX_drp:%.2f\n",
+            rate->interface,
+            rate->recv_bytes_per_sec,
+            rate->tr_bytes_per_sec,
+            rate->recv_pkts_per_sec,
+            rate->tr_pkts_per_sec,
+            rate->recv_errors_per_sec,
+            rate->tr_errors_per_sec,
+            rate->recv_dropped_per_sec,
+            rate->tr_dropped_per_sec);
+    }
+
+    fprintf(fp,"\n");
+}
+
+void destroy_rate_snapshot(RateSnapShot *snap)
+{
+    if(!snap) return;
+
+    if(snap->interfaces){
+        free(snap->interfaces);
+        snap->interfaces = NULL;
+    }
+
+    free(snap);
+}

@@ -12,7 +12,7 @@ int parse_line(const char *line, NetStats *out){
 
     memset(out, 0, sizeof(NetStats));
 
-    /* Skip leading whitespace (IMPORTANT) */
+                
     while (isspace((unsigned char)*line)) line++;
 
     if(!line[0]) return -1;
