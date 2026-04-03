@@ -16,6 +16,8 @@ set(SOURCES
     src/parser.c
     src/net_reader.c
     src/rate.c
+    src/rule_engine.c
+    src/anomaly.c
     main.c
 )
 
@@ -24,3 +26,5 @@ add_executable(ids ${SOURCES})
 
 # Optional warnings (recommended)
 target_compile_options(ids PRIVATE -Wall -Wextra -Wpedantic)
+
+target_link_libraries(ids m)
