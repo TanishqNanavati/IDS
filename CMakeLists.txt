@@ -24,7 +24,11 @@ set(SOURCES
 # Create executable
 add_executable(ids ${SOURCES})
 
-# Optional warnings (recommended)
-target_compile_options(ids PRIVATE -Wall -Wextra -Wpedantic)
+# Warnings + optimization
+target_compile_options(ids PRIVATE -Wall -Wextra -Wpedantic -O2)
 
+# Link math library (for sqrt)
 target_link_libraries(ids m)
+
+# Debug symbols
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g")

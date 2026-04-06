@@ -23,7 +23,6 @@ typedef struct {
 AnomalyDetector *anomaly_create(int max_interfaces);
 void anomaly_destroy(AnomalyDetector *detector);
 
-AlertList *anomaly_evaluate(AnomalyDetector *detector,
-                            const RateSnapShot *rates);
+AlertList *anomaly_evaluate(AnomalyDetector *detector,const RateSnapShot *rates);
 
 #endif

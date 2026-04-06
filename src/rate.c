@@ -19,6 +19,19 @@ static int find_interface(const Network_Snapshot *snap,const char *name){
     return -1;
 }
 
+static void print_rate_graph(double value)
+{
+    double kb = value / 1024.0;
+    int bars = kb * 2;   // more sensitive
+
+    if(bars < 1 && value > 0) bars = 1;
+    if(bars > 50) bars = 50;
+
+    printf("[");
+    for(int i=0;i<bars;i++) printf("#");
+    for(int i=bars;i<50;i++) printf(" ");
+    printf("]");
+}
 /* ---------- NEW helper ---------- */
 static char *format_bytes(double bytes, char *buf, size_t size)
 {
@@ -130,6 +143,11 @@ void print_rate_snapshot(const RateSnapShot *snap)
 
         printf("    RX Pkts: %.2f pps  TX Pkts: %.2f pps\n",
                rate->recv_pkts_per_sec, rate->tr_pkts_per_sec);
+
+        /* Graph inside loop */
+        printf("    RX Graph: ");
+        print_rate_graph(rate->recv_bytes_per_sec);
+        printf("\n");
     }
 
     printf("\n====================================\n");

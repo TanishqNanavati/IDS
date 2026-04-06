@@ -1,169 +1,126 @@
 #include "rule_engine.h"
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
-
-/* ===========================
-   Helper Functions
-   =========================== */
-
-const char *severity_to_string(AlertSeverity severity)
-{
-    switch(severity) {
-        case SEVERITY_INFO: return "INFO";
-        case SEVERITY_WARN: return "WARN";
-        case SEVERITY_CRITICAL: return "CRITICAL";
-        default: return "UNKNOWN";
-    }
-}
-
-const char *metric_type_to_string(MetricType type)
-{
-    switch(type) {
-        case METRIC_RX_BYTES_PER_SEC: return "RX Bytes/sec";
-        case METRIC_TX_BYTES_PER_SEC: return "TX Bytes/sec";
-        case METRIC_RX_PKTS_PER_SEC: return "RX Packets/sec";
-        case METRIC_TX_PKTS_PER_SEC: return "TX Packets/sec";
-        case METRIC_RX_ERRORS_PER_SEC: return "RX Errors/sec";
-        case METRIC_TX_ERRORS_PER_SEC: return "TX Errors/sec";
-        case METRIC_RX_DROPPED_PER_SEC: return "RX Dropped/sec";
-        case METRIC_TX_DROPPED_PER_SEC: return "TX Dropped/sec";
-        default: return "UNKNOWN";
-    }
-}
-
-static double get_metric_value(const RateStats *rate, MetricType type)
-{
-    switch(type) {
-        case METRIC_RX_BYTES_PER_SEC: return rate->recv_bytes_per_sec;
-        case METRIC_TX_BYTES_PER_SEC: return rate->tr_bytes_per_sec;
-        case METRIC_RX_PKTS_PER_SEC: return rate->recv_pkts_per_sec;
-        case METRIC_TX_PKTS_PER_SEC: return rate->tr_pkts_per_sec;
-        case METRIC_RX_ERRORS_PER_SEC: return rate->recv_errors_per_sec;
-        case METRIC_TX_ERRORS_PER_SEC: return rate->tr_errors_per_sec;
-        case METRIC_RX_DROPPED_PER_SEC: return rate->recv_dropped_per_sec;
-        case METRIC_TX_DROPPED_PER_SEC: return rate->tr_dropped_per_sec;
-        default: return 0.0;
-    }
-}
-
-/* ===========================
-   Rule Engine API
-   =========================== */
 
 RuleEngine *rule_engine_create(int max_rules)
 {
-    if (max_rules <= 0) return NULL;
-
-    RuleEngine *engine = malloc(sizeof(RuleEngine));
-    if (!engine) return NULL;
-
-    engine->rules = calloc(max_rules, sizeof(Rule));
-    if (!engine->rules) {
-        free(engine);
-        return NULL;
-    }
-
-    engine->rule_count = 0;
-    engine->max_rules = max_rules;
-    return engine;
+    (void)max_rules;
+    RuleEngine *e = malloc(sizeof(RuleEngine));
+    return e;
 }
 
 void rule_engine_destroy(RuleEngine *engine)
 {
-    if (!engine) return;
-    free(engine->rules);
-    free(engine);
+    if(engine) free(engine);
 }
 
-int rule_engine_add_rule(RuleEngine *engine,
-                         const char *name,
-                         const char *description,
-                         AlertSeverity severity,
-                         MetricType metric_type,
-                         double threshold)
+/* classification */
+const char* classify_attack(const RateStats *r)
 {
-    if (!engine || !name) return -1;
+    if(r->recv_pkts_per_sec > 5000)
+        return "DoS Attack";
 
-    if (engine->rule_count >= engine->max_rules)
-        return -1;
+    if(r->recv_pkts_per_sec > 2000 &&
+       r->recv_bytes_per_sec < 200000)
+        return "Port Scan";
 
-    Rule *rule = &engine->rules[engine->rule_count];
+    if(r->recv_bytes_per_sec > 5000000)
+        return "Data Exfiltration";
 
-    strncpy(rule->name, name, sizeof(rule->name)-1);
-    strncpy(rule->description, description, sizeof(rule->description)-1);
-
-    rule->severity = severity;
-    rule->metric_type = metric_type;
-    rule->threshold = threshold;
-    rule->enabled = 1;
-
-    engine->rule_count++;
-    return 0;
+    return "Normal";
 }
 
-int rule_engine_enable_rule(RuleEngine *engine, const char *name, int enabled)
+AlertList *rule_engine_evaluate(RuleEngine *engine,
+                                const RateSnapShot *rates)
 {
-    if (!engine || !name) return -1;
+    (void)engine;
+    if(!rates) return NULL;
 
-    for (int i=0;i<engine->rule_count;i++){
-        if(strcmp(engine->rules[i].name,name)==0){
-            engine->rules[i].enabled = enabled;
-            return 0;
+    AlertList *alerts = alert_list_create(8);
+    if(!alerts) return NULL;
+
+    for(int i=0;i<rates->count;i++)
+    {
+        const RateStats *r = &rates->interfaces[i];
+
+        printf("Interface: %s | Attack: %s\n",
+               r->interface, classify_attack(r));
+
+        /* DoS detection */
+        if(r->recv_pkts_per_sec > 5000)
+        {
+            Alert a;
+
+            strncpy(a.interface,r->interface,15);
+            strcpy(a.rule_name,"DOS_PACKET_FLOOD");
+            a.severity = SEVERITY_CRITICAL;
+            a.value = r->recv_pkts_per_sec;
+            a.threshold = 5000;
+            a.timestamp = time(NULL);
+
+            snprintf(a.message,sizeof(a.message),
+                     "DoS suspected %.2f pps",
+                     r->recv_pkts_per_sec);
+
+            alert_list_add(alerts,&a);
         }
-    }
-    return -1;
-}
 
-AlertList *rule_engine_evaluate(RuleEngine *engine, const RateSnapShot *rates)
-{
-    if (!engine || !rates) return NULL;
+        /* Port scan detection */
+        if(r->recv_pkts_per_sec > 2000 &&
+           r->recv_bytes_per_sec < 200000)
+        {
+            Alert a;
 
-    AlertList *alerts = alert_list_create(16);
-    if (!alerts) return NULL;
+            strncpy(a.interface,r->interface,15);
+            strcpy(a.rule_name,"PORT_SCAN");
+            a.severity = SEVERITY_WARN;
+            a.value = r->recv_pkts_per_sec;
+            a.threshold = 2000;
+            a.timestamp = time(NULL);
 
-    for(int r=0;r<engine->rule_count;r++){
-        Rule *rule = &engine->rules[r];
-        if(!rule->enabled) continue;
+            strcpy(a.message,"Port scan suspected");
 
-        for(int i=0;i<rates->count;i++){
-            const RateStats *rate = &rates->interfaces[i];
+            alert_list_add(alerts,&a);
+        }
 
-            double value = get_metric_value(rate, rule->metric_type);
+        /* bandwidth spike */
+        if(r->recv_bytes_per_sec > 5000000)
+        {
+            Alert a;
 
-            if(value > rule->threshold){
-                Alert alert;
+            strncpy(a.interface,r->interface,15);
+            strcpy(a.rule_name,"HIGH_BANDWIDTH");
+            a.severity = SEVERITY_WARN;
+            a.value = r->recv_bytes_per_sec;
+            a.threshold = 5000000;
+            a.timestamp = time(NULL);
 
-                strncpy(alert.interface, rate->interface, sizeof(alert.interface)-1);
-                strncpy(alert.rule_name, rule->name, sizeof(alert.rule_name)-1);
+            strcpy(a.message,"High bandwidth usage");
 
-                alert.severity = rule->severity;
-                alert.value = value;
-                alert.threshold = rule->threshold;
-                alert.timestamp = time(NULL);
-
-                snprintf(alert.message,sizeof(alert.message),
-                         "%s exceeded on %s: %.2f > %.2f",
-                         rule->name, alert.interface, value, rule->threshold);
-
-                alert_list_add(alerts,&alert);
-            }
+            alert_list_add(alerts,&a);
         }
     }
 
     return alerts;
 }
 
-/* ===========================
-   Alert List
-   =========================== */
+/* ================= ALERT LIST ================= */
 
 AlertList *alert_list_create(int capacity)
 {
     AlertList *list = malloc(sizeof(AlertList));
     if(!list) return NULL;
 
-    list->alerts = calloc(capacity,sizeof(Alert));
+    list->alerts = malloc(sizeof(Alert) * capacity);
+    if(!list->alerts){
+        free(list);
+        return NULL;
+    }
+
     list->count = 0;
     list->capacity = capacity;
+
     return list;
 }
 
@@ -178,9 +135,10 @@ int alert_list_add(AlertList *list, const Alert *alert)
 {
     if(!list || !alert) return -1;
 
-    if(list->count >= list->capacity){
+    if(list->count >= list->capacity)
+    {
         int newcap = list->capacity * 2;
-        Alert *tmp = realloc(list->alerts,newcap*sizeof(Alert));
+        Alert *tmp = realloc(list->alerts,sizeof(Alert)*newcap);
         if(!tmp) return -1;
 
         list->alerts = tmp;
@@ -191,43 +149,37 @@ int alert_list_add(AlertList *list, const Alert *alert)
     return 0;
 }
 
+/* ================= PRINT ALERTS ================= */
+
+const char *severity_to_string(AlertSeverity s)
+{
+    switch(s){
+        case SEVERITY_INFO: return "INFO";
+        case SEVERITY_WARN: return "WARN";
+        case SEVERITY_CRITICAL: return "CRITICAL";
+        default: return "UNKNOWN";
+    }
+}
+
 void print_alerts(const AlertList *list)
 {
-    if(!list || list->count == 0){
+    if(!list || list->count == 0)
+    {
         printf("✓ No alerts triggered\n");
         return;
     }
 
-    printf("\n=========== ALERTS ===========\n");
-
-    for(int i=0;i<list->count;i++){
+    for(int i=0;i<list->count;i++)
+    {
         const Alert *a = &list->alerts[i];
 
-        printf("[%d] %s | %s | %.2f > %.2f\n",
-               i+1,
+        printf("\n[%s] %s | %s\n",
                severity_to_string(a->severity),
                a->interface,
-               a->value,
-               a->threshold);
+               a->rule_name);
 
         printf("    %s\n", a->message);
-    }
-
-    printf("==============================\n");
-}
-
-void log_alerts(FILE *fp, const AlertList *list)
-{
-    if(!fp || !list) return;
-
-    for(int i=0;i<list->count;i++){
-        const Alert *a = &list->alerts[i];
-
-        fprintf(fp,"[%s] %s %s %.2f > %.2f\n",
-                severity_to_string(a->severity),
-                a->rule_name,
-                a->interface,
-                a->value,
-                a->threshold);
+        printf("    value=%.2f threshold=%.2f\n",
+               a->value,a->threshold);
     }
 }
