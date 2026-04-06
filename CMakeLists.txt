@@ -18,6 +18,7 @@ set(SOURCES
     src/rate.c
     src/rule_engine.c
     src/anomaly.c
+    src/config.c
     main.c
 )
 

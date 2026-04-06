@@ -10,6 +10,7 @@ compile_commands.json
 
 # Binary output
 ids
+ids.*
 ids_*
 *.out
 *.exe
