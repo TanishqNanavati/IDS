@@ -233,6 +233,11 @@ static void analyzer_process(int read_fd, const Config *cfg)
 
         iteration++;
 
+        /* Update metrics with interface data */
+        if(metrics) {
+            metrics_server_update_interfaces(metrics, rate);
+        }
+
         /* Display rates */
         printf("[Iteration %d]\n", iteration);
         print_rate_snapshot(rate);
@@ -246,6 +251,13 @@ static void analyzer_process(int read_fd, const Config *cfg)
                     printf("\n====== RULE ALERTS (%d) ======\n", alerts->count);
                     print_alerts(alerts);
                     total_alerts += alerts->count;
+                    
+                    /* Update metrics with rule alerts */
+                    if(metrics) {
+                        for(int i = 0; i < alerts->count; i++) {
+                            metrics_server_update_alerts(metrics, alerts->alerts[i].rule_name, time(NULL));
+                        }
+                    }
                 }
                 alert_list_destroy(alerts);
             }
@@ -259,6 +271,13 @@ static void analyzer_process(int read_fd, const Config *cfg)
                 printf("\n===== ANOMALY ALERTS (%d) =====\n", anom->count);
                 print_alerts(anom);
                 total_alerts += anom->count;
+                
+                /* Update metrics with anomaly alerts */
+                if(metrics) {
+                    for(int i = 0; i < anom->count; i++) {
+                        metrics_server_update_alerts(metrics, "anomaly", time(NULL));
+                    }
+                }
             }
             alert_list_destroy(anom);
         }

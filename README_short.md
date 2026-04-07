@@ -117,3 +117,19 @@ network-ids/
 ├── src/                  # Sources
 └── build/                # Artifacts
 ```
+
+### Build Options
+```bash
+# Debug build
+cmake -DCMAKE_BUILD_TYPE=Debug .. && make
+
+# Clean rebuild
+make clean && make
+
+# Static analysis
+cppcheck --enable=all src/
+```
+
+## 📄 License
+
+MIT License - see LICENSE file for details.

@@ -21,6 +21,11 @@ struct MetricsServer {
     unsigned long total_iterations;
     unsigned long total_alerts;
     time_t last_update;
+    int interface_count;
+    InterfaceMetrics interfaces[MAX_INTERFACES];
+    int rule_count;
+    RuleMetrics rules[MAX_RULES];
+    AlertHistogram histogram;
 };
 
 static void send_response(int client_fd, const char *status,
@@ -41,20 +46,27 @@ static void send_response(int client_fd, const char *status,
     send(client_fd, body, strlen(body), 0);
 }
 
+#include "http_server.h"
+#include "common.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 static void send_metrics(MetricsServer *server, int client_fd)
 {
-    char body[1024];
-    unsigned long iterations;
-    unsigned long alerts;
-    time_t last_update;
-
-    pthread_mutex_lock(&server->lock);
-    iterations = server->total_iterations;
-    alerts = server->total_alerts;
-    last_update = server->last_update;
-    pthread_mutex_unlock(&server->lock);
-
-    int len = snprintf(body, sizeof(body),
+    char body[8192];
+    int offset = 0;
+    
+    // Basic metrics
+    offset += snprintf(body + offset, sizeof(body) - offset,
         "# HELP ids_total_iterations Total rate snapshots processed by the analyzer\n"
         "# TYPE ids_total_iterations counter\n"
         "ids_total_iterations %lu\n"
@@ -64,15 +76,87 @@ static void send_metrics(MetricsServer *server, int client_fd)
         "# HELP ids_last_update_timestamp_seconds Timestamp of the last metrics update\n"
         "# TYPE ids_last_update_timestamp_seconds gauge\n"
         "ids_last_update_timestamp_seconds %ld\n",
-        iterations, alerts, (long)last_update);
-
-    if(len < 0 || (size_t)len >= sizeof(body)) {
-        send_response(client_fd, "500 Internal Server Error", "text/plain", "Metrics generation failed\n");
+        server->total_iterations, server->total_alerts, (long)server->last_update);
+    
+    // Per-interface metrics
+    for(int i = 0; i < server->interface_count && offset < sizeof(body) - 1000; i++) {
+        const InterfaceMetrics *iface = &server->interfaces[i];
+        offset += snprintf(body + offset, sizeof(body) - offset,
+            "# HELP ids_interface_rx_bytes_per_sec Receive bytes per second for interface %s\n"
+            "# TYPE ids_interface_rx_bytes_per_sec gauge\n"
+            "ids_interface_rx_bytes_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_tx_bytes_per_sec Transmit bytes per second for interface %s\n"
+            "# TYPE ids_interface_tx_bytes_per_sec gauge\n"
+            "ids_interface_tx_bytes_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_rx_pkts_per_sec Receive packets per second for interface %s\n"
+            "# TYPE ids_interface_rx_pkts_per_sec gauge\n"
+            "ids_interface_rx_pkts_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_tx_pkts_per_sec Transmit packets per second for interface %s\n"
+            "# TYPE ids_interface_tx_pkts_per_sec gauge\n"
+            "ids_interface_tx_pkts_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_rx_errors_per_sec Receive errors per second for interface %s\n"
+            "# TYPE ids_interface_rx_errors_per_sec gauge\n"
+            "ids_interface_rx_errors_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_tx_errors_per_sec Transmit errors per second for interface %s\n"
+            "# TYPE ids_interface_tx_errors_per_sec gauge\n"
+            "ids_interface_tx_errors_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_rx_dropped_per_sec Receive dropped packets per second for interface %s\n"
+            "# TYPE ids_interface_rx_dropped_per_sec gauge\n"
+            "ids_interface_rx_dropped_per_sec{interface=\"%s\"} %.2f\n"
+            "# HELP ids_interface_tx_dropped_per_sec Transmit dropped packets per second for interface %s\n"
+            "# TYPE ids_interface_tx_dropped_per_sec gauge\n"
+            "ids_interface_tx_dropped_per_sec{interface=\"%s\"} %.2f\n",
+            iface->interface, iface->interface, iface->rx_bytes_per_sec,
+            iface->interface, iface->interface, iface->tx_bytes_per_sec,
+            iface->interface, iface->interface, iface->rx_pkts_per_sec,
+            iface->interface, iface->interface, iface->tx_pkts_per_sec,
+            iface->interface, iface->interface, iface->rx_errors_per_sec,
+            iface->interface, iface->interface, iface->tx_errors_per_sec,
+            iface->interface, iface->interface, iface->rx_dropped_per_sec,
+            iface->interface, iface->interface, iface->tx_dropped_per_sec);
+    }
+    
+    // Per-rule alert counters
+    for(int i = 0; i < server->rule_count && offset < sizeof(body) - 500; i++) {
+        const RuleMetrics *rule = &server->rules[i];
+        offset += snprintf(body + offset, sizeof(body) - offset,
+            "# HELP ids_rule_alerts_total Total alerts for rule %s\n"
+            "# TYPE ids_rule_alerts_total counter\n"
+            "ids_rule_alerts_total{rule=\"%s\"} %lu\n"
+            "# HELP ids_rule_last_alert_timestamp_seconds Last alert timestamp for rule %s\n"
+            "# TYPE ids_rule_last_alert_timestamp_seconds gauge\n"
+            "ids_rule_last_alert_timestamp_seconds{rule=\"%s\"} %ld\n",
+            rule->rule_name, rule->rule_name, rule->alert_count,
+            rule->rule_name, rule->rule_name, (long)rule->last_alert);
+    }
+    
+    // Alert histogram
+    if(server->histogram.total_alerts > 0 && offset < sizeof(body) - 1000) {
+        offset += snprintf(body + offset, sizeof(body) - offset,
+            "# HELP ids_alert_frequency_histogram Histogram of alert frequencies\n"
+            "# TYPE ids_alert_frequency_histogram histogram\n");
+        
+        double cumulative = 0;
+        for(int i = 0; i < HISTOGRAM_BUCKETS; i++) {
+            cumulative += server->histogram.buckets[i];
+            offset += snprintf(body + offset, sizeof(body) - offset,
+                "ids_alert_frequency_histogram_bucket{le=\"%d\"} %.0f\n",
+                (i + 1) * 10, cumulative);
+        }
+        offset += snprintf(body + offset, sizeof(body) - offset,
+            "ids_alert_frequency_histogram_count %lu\n"
+            "ids_alert_frequency_histogram_sum %lu\n",
+            server->histogram.total_alerts, server->histogram.total_alerts);
+    }
+    
+    if(offset >= sizeof(body)) {
+        send_response(client_fd, "500 Internal Server Error", "text/plain", "Metrics buffer overflow\n");
         return;
     }
-
+    
     send_response(client_fd, "200 OK", "text/plain; version=0.0.4", body);
 }
+
 
 static void handle_client(MetricsServer *server, int client_fd)
 {
@@ -88,6 +172,14 @@ static void handle_client(MetricsServer *server, int client_fd)
         send_metrics(server, client_fd);
     } else if(strncmp(request, "GET /healthz", 11) == 0) {
         send_response(client_fd, "200 OK", "text/plain", "ok\n");
+    } else if(strncmp(request, "GET /dashboard", 13) == 0) {
+        char *json = metrics_server_create_grafana_dashboard_json(server);
+        if(json) {
+            send_response(client_fd, "200 OK", "application/json", json);
+            free(json);
+        } else {
+            send_response(client_fd, "500 Internal Server Error", "text/plain", "Failed to generate dashboard\n");
+        }
     } else {
         send_response(client_fd, "404 Not Found", "text/plain", "Not Found\n");
     }
@@ -155,6 +247,9 @@ MetricsServer *metrics_server_create(int port)
     server->total_iterations = 0;
     server->total_alerts = 0;
     server->last_update = time(NULL);
+    server->interface_count = 0;
+    server->rule_count = 0;
+    memset(&server->histogram, 0, sizeof(server->histogram));
     pthread_mutex_init(&server->lock, NULL);
 
     if(pthread_create(&server->thread, NULL, server_thread, server) != 0) {
@@ -192,4 +287,212 @@ void metrics_server_update(MetricsServer *server,
     server->total_alerts = total_alerts;
     server->last_update = last_update;
     pthread_mutex_unlock(&server->lock);
+}
+
+void metrics_server_update_interfaces(MetricsServer *server,
+                                     const RateSnapShot *rates)
+{
+    if(!server || !rates) return;
+
+    pthread_mutex_lock(&server->lock);
+    server->interface_count = rates->count;
+    for(int i = 0; i < rates->count && i < MAX_INTERFACES; i++) {
+        const RateStats *rate = &rates->interfaces[i];
+        InterfaceMetrics *iface = &server->interfaces[i];
+        
+        strncpy(iface->interface, rate->interface, sizeof(iface->interface) - 1);
+        iface->rx_bytes_per_sec = rate->recv_bytes_per_sec;
+        iface->tx_bytes_per_sec = rate->tr_bytes_per_sec;
+        iface->rx_pkts_per_sec = rate->recv_pkts_per_sec;
+        iface->tx_pkts_per_sec = rate->tr_pkts_per_sec;
+        iface->rx_errors_per_sec = rate->recv_errors_per_sec;
+        iface->tx_errors_per_sec = rate->tr_errors_per_sec;
+        iface->rx_dropped_per_sec = rate->recv_dropped_per_sec;
+        iface->tx_dropped_per_sec = rate->tr_dropped_per_sec;
+    }
+    pthread_mutex_unlock(&server->lock);
+}
+
+void metrics_server_update_alerts(MetricsServer *server,
+                                  const char *rule_name,
+                                  time_t alert_time)
+{
+    if(!server || !rule_name) return;
+
+    pthread_mutex_lock(&server->lock);
+    
+    // Find or add rule
+    int rule_idx = -1;
+    for(int i = 0; i < server->rule_count; i++) {
+        if(strcmp(server->rules[i].rule_name, rule_name) == 0) {
+            rule_idx = i;
+            break;
+        }
+    }
+    
+    if(rule_idx == -1 && server->rule_count < MAX_RULES) {
+        rule_idx = server->rule_count++;
+        strncpy(server->rules[rule_idx].rule_name, rule_name, 
+                sizeof(server->rules[rule_idx].rule_name) - 1);
+        server->rules[rule_idx].alert_count = 0;
+    }
+    
+    if(rule_idx >= 0) {
+        server->rules[rule_idx].alert_count++;
+        server->rules[rule_idx].last_alert = alert_time;
+        
+        // Update histogram (simple bucket based on alert count)
+        int bucket = server->rules[rule_idx].alert_count / 10;
+        if(bucket < HISTOGRAM_BUCKETS) {
+            server->histogram.buckets[bucket]++;
+        }
+        server->histogram.total_alerts++;
+    }
+    
+    pthread_mutex_unlock(&server->lock);
+}
+
+char *metrics_server_create_grafana_dashboard_json(MetricsServer *server)
+{
+    if(!server) return NULL;
+
+    // Allocate a large buffer for the JSON
+    char *json = calloc(1, 16384);
+    if(!json) return NULL;
+
+    int offset = 0;
+    offset += snprintf(json + offset, 16384 - offset,
+        "{\n"
+        "  \"dashboard\": {\n"
+        "    \"id\": null,\n"
+        "    \"title\": \"Network IDS Metrics\",\n"
+        "    \"tags\": [\"ids\", \"network\", \"monitoring\"],\n"
+        "    \"timezone\": \"browser\",\n"
+        "    \"panels\": [\n");
+
+    // Panel 1: Total Iterations and Alerts
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 1,\n"
+        "        \"title\": \"IDS Overview\",\n"
+        "        \"type\": \"stat\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"ids_total_iterations\",\n"
+        "            \"legendFormat\": \"Total Iterations\"\n"
+        "          },\n"
+        "          {\n"
+        "            \"expr\": \"ids_total_alerts_total\",\n"
+        "            \"legendFormat\": \"Total Alerts\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 0, \"y\": 0}\n"
+        "      },\n");
+
+    // Panel 2: Interface Traffic
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 2,\n"
+        "        \"title\": \"Interface Traffic (Bytes/sec)\",\n"
+        "        \"type\": \"graph\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_rx_bytes_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} RX\"\n"
+        "          },\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_tx_bytes_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} TX\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 12, \"y\": 0}\n"
+        "      },\n");
+
+    // Panel 3: Packet Rates
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 3,\n"
+        "        \"title\": \"Packet Rates (Packets/sec)\",\n"
+        "        \"type\": \"graph\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_rx_pkts_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} RX\"\n"
+        "          },\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_tx_pkts_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} TX\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 0, \"y\": 8}\n"
+        "      },\n");
+
+    // Panel 4: Error Rates
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 4,\n"
+        "        \"title\": \"Error Rates\",\n"
+        "        \"type\": \"graph\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_rx_errors_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} RX Errors\"\n"
+        "          },\n"
+        "          {\n"
+        "            \"expr\": \"ids_interface_tx_errors_per_sec\",\n"
+        "            \"legendFormat\": \"{{interface}} TX Errors\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 12, \"y\": 8}\n"
+        "      },\n");
+
+    // Panel 5: Rule Alerts
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 5,\n"
+        "        \"title\": \"Rule Alert Counts\",\n"
+        "        \"type\": \"bargauge\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"ids_rule_alerts_total\",\n"
+        "            \"legendFormat\": \"{{rule}}\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 0, \"y\": 16}\n"
+        "      },\n");
+
+    // Panel 6: Alert Frequency Histogram
+    offset += snprintf(json + offset, 16384 - offset,
+        "      {\n"
+        "        \"id\": 6,\n"
+        "        \"title\": \"Alert Frequency Distribution\",\n"
+        "        \"type\": \"heatmap\",\n"
+        "        \"targets\": [\n"
+        "          {\n"
+        "            \"expr\": \"increase(ids_alert_frequency_histogram_bucket[5m])\",\n"
+        "            \"legendFormat\": \"{{le}}\"\n"
+        "          }\n"
+        "        ],\n"
+        "        \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 12, \"y\": 16}\n"
+        "      }\n"
+        "    ],\n"
+        "    \"time\": {\n"
+        "      \"from\": \"now-1h\",\n"
+        "      \"to\": \"now\"\n"
+        "    },\n"
+        "    \"timepicker\": {},\n"
+        "    \"templating\": {\n"
+        "      \"list\": []\n"
+        "    },\n"
+        "    \"annotations\": {\n"
+        "      \"list\": []\n"
+        "    },\n"
+        "    \"refresh\": \"5s\",\n"
+        "    \"schemaVersion\": 27,\n"
+        "    \"version\": 0,\n"
+        "    \"links\": []\n"
+        "  }\n"
+        "}\n");
+
+    return json;
 }
