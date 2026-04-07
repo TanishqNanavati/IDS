@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
     int sampling_interval;      // Seconds between samples 
     int log_level;              // 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR 
+    int metrics_port;           // HTTP metrics endpoint port 
     int max_rules;              // Maximum rules to load 
     RuleConfig *rules;          // Array of rules 
     int rule_count;             // Number of loaded rules 

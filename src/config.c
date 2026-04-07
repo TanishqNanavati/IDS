@@ -144,6 +144,7 @@ Config *config_load(const char *filename)
     /* Initialize defaults */
     cfg->sampling_interval = 2;
     cfg->log_level = 1;
+    cfg->metrics_port = 9100;
     cfg->max_rules = 32;
     cfg->rule_count = 0;
     cfg->rules = calloc(cfg->max_rules, sizeof(RuleConfig));
@@ -199,6 +200,10 @@ Config *config_load(const char *filename)
                 cfg->log_level = atoi(val);
                 if(cfg->log_level < 0 || cfg->log_level > 3) cfg->log_level = 1;
             }
+            else if(strcmp(key, "metrics_port") == 0) {
+                cfg->metrics_port = atoi(val);
+                if(cfg->metrics_port <= 0 || cfg->metrics_port > 65535) cfg->metrics_port = 9100;
+            }
         } else {
             /* Parse rules */
             if(cfg->rule_count >= cfg->max_rules) {
@@ -220,6 +225,7 @@ Config *config_load(const char *filename)
     printf("✓ Loaded config: %s\n", filename);
     printf("  Interval: %d seconds\n", cfg->sampling_interval);
     printf("  Log level: %d\n", cfg->log_level);
+    printf("  Metrics port: %d\n", cfg->metrics_port);
     printf("  Rules: %d\n", cfg->rule_count);
 
     return cfg;
@@ -243,6 +249,7 @@ void config_print(const Config *cfg)
     printf("=====================================\n");
     printf("Sampling Interval: %d seconds\n", cfg->sampling_interval);
     printf("Log Level: %d\n", cfg->log_level);
+    printf("Metrics Port: %d\n", cfg->metrics_port);
     printf("Rules: %d\n\n", cfg->rule_count);
 
     for(int i = 0; i < cfg->rule_count; i++) {

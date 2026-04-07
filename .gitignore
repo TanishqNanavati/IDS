@@ -27,6 +27,7 @@ ids_*
 *.dylib
 
 # Logs
+logs/
 *.log
 ids_output.log
 

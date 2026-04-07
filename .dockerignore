@@ -1,0 +1,27 @@
+# Exclude local build and runtime artifacts from Docker build context
+build/
+logs/
+
+# Ignore editor and OS files
+.vscode/
+.idea/
+.DS_Store
+.Trash-*
+*~
+
+# Ignore compiled artifacts
+*.o
+*.obj
+*.lo
+*.a
+*.so
+*.so.*
+*.exe
+*.out
+
+# Ignore temporary files
+*.tmp
+*.temp
+
+# Ignore Docker internal files if present
+.dockerignore

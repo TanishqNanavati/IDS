@@ -192,3 +192,74 @@ void destroy_rate_snapshot(RateSnapShot *snap)
 
     free(snap);
 }
+
+/* Serialization for IPC */
+int rate_snapshot_serialize(const RateSnapShot *snap, void *buffer, size_t buffer_size)
+{
+    if (!snap || !buffer) return -1;
+
+    size_t required_size = sizeof(int) + sizeof(time_t) + sizeof(double) +
+                          snap->count * sizeof(RateStats);
+
+    if (buffer_size < required_size) return -1;
+
+    char *ptr = (char *)buffer;
+
+    // Serialize count
+    memcpy(ptr, &snap->count, sizeof(int));
+    ptr += sizeof(int);
+
+    // Serialize timestamp
+    memcpy(ptr, &snap->timestamp, sizeof(time_t));
+    ptr += sizeof(time_t);
+
+    // Serialize time_delta
+    memcpy(ptr, &snap->time_delta, sizeof(double));
+    ptr += sizeof(double);
+
+    // Serialize interfaces array
+    memcpy(ptr, snap->interfaces, snap->count * sizeof(RateStats));
+
+    return required_size;
+}
+
+RateSnapShot *rate_snapshot_deserialize(const void *buffer, size_t buffer_size)
+{
+    if (!buffer || buffer_size < sizeof(int) + sizeof(time_t) + sizeof(double)) return NULL;
+
+    const char *ptr = (const char *)buffer;
+
+    // Deserialize count
+    int count;
+    memcpy(&count, ptr, sizeof(int));
+    ptr += sizeof(int);
+
+    size_t required_size = sizeof(int) + sizeof(time_t) + sizeof(double) +
+                          count * sizeof(RateStats);
+
+    if (buffer_size < required_size) return NULL;
+
+    RateSnapShot *snap = create_rate_snapshot();
+    if (!snap) return NULL;
+
+    snap->count = count;
+
+    // Deserialize timestamp
+    memcpy(&snap->timestamp, ptr, sizeof(time_t));
+    ptr += sizeof(time_t);
+
+    // Deserialize time_delta
+    memcpy(&snap->time_delta, ptr, sizeof(double));
+    ptr += sizeof(double);
+
+    // Deserialize interfaces array
+    snap->interfaces = malloc(count * sizeof(RateStats));
+    if (!snap->interfaces) {
+        destroy_rate_snapshot(snap);
+        return NULL;
+    }
+
+    memcpy(snap->interfaces, ptr, count * sizeof(RateStats));
+
+    return snap;
+}

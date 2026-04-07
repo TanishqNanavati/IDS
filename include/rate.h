@@ -46,4 +46,8 @@ void destroy_rate_snapshot(RateSnapShot *snap);
 void print_rate_snapshot(const RateSnapShot *snap);
 void log_rate_snapshot(FILE *fp,const RateSnapShot *snap);
 
+/* Serialization for IPC */
+int rate_snapshot_serialize(const RateSnapShot *snap, void *buffer, size_t buffer_size);
+RateSnapShot *rate_snapshot_deserialize(const void *buffer, size_t buffer_size);
+
 #endif

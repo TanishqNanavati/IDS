@@ -19,6 +19,7 @@ set(SOURCES
     src/rule_engine.c
     src/anomaly.c
     src/config.c
+    src/http_server.c
     main.c
 )
 
@@ -28,8 +29,8 @@ add_executable(ids ${SOURCES})
 # Warnings + optimization
 target_compile_options(ids PRIVATE -Wall -Wextra -Wpedantic -O2)
 
-# Link math library (for sqrt)
-target_link_libraries(ids m)
+# Link math library (for sqrt) and pthread for metrics server
+target_link_libraries(ids m pthread)
 
 # Debug symbols
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g")
