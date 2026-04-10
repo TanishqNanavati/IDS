@@ -27,3 +27,5 @@ VOLUME ["/app/logs"]
 EXPOSE 9100
 
 CMD ["./ids", "ids.conf"]
+
+

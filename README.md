@@ -77,7 +77,7 @@ ids_alert_frequency_histogram_bucket    # Alert distribution
 ```
 
 ### Grafana Setup
-1. `curl http://localhost:9101/dashboard` → Copy JSON
+1. `curl http://localhost:9090/dashboard` → Copy JSON
 2. Grafana: **Create** → **Import** → Paste JSON
 3. Configure Prometheus datasource
 
@@ -94,7 +94,7 @@ timeout 10s ./ids ../ids.conf
 ./ids ../ids.conf &
 
 # Monitor metrics
-watch -n 1 curl -s http://localhost:9101/metrics
+watch -n 1 curl -s http://localhost:9090/metrics
 
 # Docker operations
 docker build -t network-ids .
@@ -117,3 +117,20 @@ network-ids/
 ├── src/                  # Sources
 └── build/                # Artifacts
 ```
+
+
+
+# to run project : 
+#     cd /home/tanishq/Projects/ids/build
+#     ./ids ../ids.conf
+
+# to run grafana server :
+#      sudo systemctl start grafana-server
+
+
+# to start prometheus server :
+#         cd /opt/prometheus
+#         ./prometheus --config.file=prometheus.yml --web.listen-address=":9091" &
+
+# to generate fake traffic:
+#    for i in {1..100}; do curl -s http://127.0.0.1:9090/metrics > /dev/null & done
