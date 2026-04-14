@@ -58,3 +58,6 @@ core.*
 *.gcda
 *.gcno
 *.gcov
+
+src/.cph/*
+run.txt

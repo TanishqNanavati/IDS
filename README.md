@@ -117,20 +117,3 @@ network-ids/
 ├── src/                  # Sources
 └── build/                # Artifacts
 ```
-
-
-
-# to run project : 
-#     cd /home/tanishq/Projects/ids/build
-#     ./ids ../ids.conf
-
-# to run grafana server :
-#      sudo systemctl start grafana-server
-
-
-# to start prometheus server :
-#         cd /opt/prometheus
-#         ./prometheus --config.file=prometheus.yml --web.listen-address=":9091" &
-
-# to generate fake traffic:
-#    for i in {1..100}; do curl -s http://127.0.0.1:9090/metrics > /dev/null & done
