@@ -1,5 +1,24 @@
 #include"rate.h"
 #include<math.h>
+#include <unistd.h>
+
+/* Console colors (disabled automatically when not attached to a TTY or when NO_COLOR is set) */
+#define CLR_RESET  "\x1b[0m"
+#define CLR_WHITE  "\x1b[97m"
+#define CLR_RED    "\x1b[31m"
+#define CLR_ORANGE "\x1b[38;5;208m"
+#define CLR_BOLD   "\x1b[1m"
+
+static int stdout_color_enabled(void)
+{
+    static int cached = -1;
+    if(cached == -1) {
+        cached = (getenv("NO_COLOR") == NULL) && isatty(STDOUT_FILENO);
+    }
+    return cached;
+}
+
+static const char *outc(const char *code) { return stdout_color_enabled() ? code : ""; }
 
 static inline double calculate_rate(unsigned long prev,unsigned long curr,double time_delta){
     if(time_delta <= 0) return 0.0;
@@ -27,10 +46,15 @@ static void print_rate_graph(double value)
     if(bars < 1 && value > 0) bars = 1;
     if(bars > 50) bars = 50;
 
-    printf("[");
+    printf("%s[", outc(CLR_WHITE));
+
+    printf("%s", outc(CLR_RED));
     for(int i=0;i<bars;i++) printf("#");
+
+    printf("%s", outc(CLR_WHITE));
     for(int i=bars;i<50;i++) printf(" ");
-    printf("]");
+
+    printf("]%s", outc(CLR_RESET));
 }
 /* ---------- NEW helper ---------- */
 static char *format_bytes(double bytes, char *buf, size_t size)
@@ -128,29 +152,38 @@ void print_rate_snapshot(const RateSnapShot *snap)
 {
     if (!snap) return;
 
-    printf("\n====================================\n");
-    printf("Network Rates (%d interfaces, %.1f sec delta)\n",
-           snap->count, snap->time_delta);
-    printf("====================================\n");
+    printf("\n%s====================================%s\n", outc(CLR_WHITE), outc(CLR_RESET));
+    printf("%s%sNetwork Rates%s (%s%d%s interfaces, %s%.1f%s sec delta)\n",
+           outc(CLR_BOLD), outc(CLR_WHITE), outc(CLR_RESET),
+           outc(CLR_ORANGE), snap->count, outc(CLR_RESET),
+           outc(CLR_ORANGE), snap->time_delta, outc(CLR_RESET));
+    printf("%s====================================%s\n", outc(CLR_WHITE), outc(CLR_RESET));
 
     for (int i = 0; i < snap->count; i++) {
         const RateStats *rate = &snap->interfaces[i];
         char buf[32];
 
-        printf("\n[%d] %s\n", i + 1, rate->interface);
-        printf("    RX Bytes:   %s", format_bytes(rate->recv_bytes_per_sec, buf, sizeof(buf)));
-        printf("  TX Bytes:   %s\n", format_bytes(rate->tr_bytes_per_sec, buf, sizeof(buf)));
+        printf("\n%s[%d]%s %s%s%s\n",
+               outc(CLR_WHITE), i + 1, outc(CLR_RESET),
+               outc(CLR_BOLD), rate->interface, outc(CLR_RESET));
 
-        printf("    RX Pkts: %.2f pps  TX Pkts: %.2f pps\n",
-               rate->recv_pkts_per_sec, rate->tr_pkts_per_sec);
+        printf("    %sRX Bytes:%s   %s%s%s",
+               outc(CLR_ORANGE), outc(CLR_RESET),
+               outc(CLR_ORANGE), format_bytes(rate->recv_bytes_per_sec, buf, sizeof(buf)), outc(CLR_RESET));
+        printf("  %sTX Bytes:%s   %s%s%s\n",
+               outc(CLR_ORANGE), outc(CLR_RESET),
+               outc(CLR_ORANGE), format_bytes(rate->tr_bytes_per_sec, buf, sizeof(buf)), outc(CLR_RESET));
 
-        /* Graph inside loop */
-        printf("    RX Graph: ");
+        printf("    %sRX Pkts:%s %s%.2f pps%s  %sTX Pkts:%s %s%.2f pps%s\n",
+               outc(CLR_WHITE), outc(CLR_RESET), outc(CLR_WHITE), rate->recv_pkts_per_sec, outc(CLR_RESET),
+               outc(CLR_WHITE), outc(CLR_RESET), outc(CLR_WHITE), rate->tr_pkts_per_sec, outc(CLR_RESET));
+
+        printf("    %sRX Graph:%s ", outc(CLR_ORANGE), outc(CLR_RESET));
         print_rate_graph(rate->recv_bytes_per_sec);
         printf("\n");
     }
 
-    printf("\n====================================\n");
+    printf("\n%s====================================%s\n", outc(CLR_WHITE), outc(CLR_RESET));
 }
 
 void log_rate_snapshot(FILE *fp,const RateSnapShot *snap)

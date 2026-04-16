@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "common.h"
 #include "net_reader.h"
 #include "rate.h"
@@ -14,6 +16,35 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <string.h>
+
+/* Console colors (disabled automatically when not attached to a TTY or when NO_COLOR is set) */
+#define CLR_RESET  "\x1b[0m"
+#define CLR_WHITE  "\x1b[97m"
+#define CLR_RED    "\x1b[31m"
+#define CLR_ORANGE "\x1b[38;5;208m"
+#define CLR_BOLD   "\x1b[1m"
+
+static int stdout_color_enabled(void)
+{
+    static int cached = -1;
+    if(cached == -1) {
+        cached = (getenv("NO_COLOR") == NULL) && isatty(STDOUT_FILENO);
+    }
+    return cached;
+}
+
+static int stderr_color_enabled(void)
+{
+    static int cached = -1;
+    if(cached == -1) {
+        cached = (getenv("NO_COLOR") == NULL) && isatty(STDERR_FILENO);
+    }
+    return cached;
+}
+
+static const char *outc(const char *code) { return stdout_color_enabled() ? code : ""; }
+static const char *errc(const char *code) { return stderr_color_enabled() ? code : ""; }
 
 static volatile sig_atomic_t running = 1;
 static pid_t collector_pid = -1;
@@ -35,19 +66,25 @@ static void apply_config_rules(RuleEngine *engine, const Config *cfg)
 {
     if(!engine || !cfg) return;
 
-    printf("\n✓ Loading %d rules from config...\n", cfg->rule_count);
+    printf("\n%s%sLoading rules%s %s(%d)%s\n",
+           outc(CLR_BOLD), outc(CLR_WHITE), outc(CLR_RESET),
+           outc(CLR_ORANGE), cfg->rule_count, outc(CLR_RESET));
 
     for(int i = 0; i < cfg->rule_count; i++) {
         const RuleConfig *rc = &cfg->rules[i];
 
         if(!rc->enabled) {
-            printf("  [SKIP] %s (disabled)\n", rc->name);
+            printf("  %s[SKIP]%s %s%s%s (disabled)\n",
+                   outc(CLR_ORANGE), outc(CLR_RESET),
+                   outc(CLR_WHITE), rc->name, outc(CLR_RESET));
             continue;
         }
 
         int metric_type = config_get_metric_type(rc->metric);
         if(metric_type < 0) {
-            printf("  [ERROR] %s: Unknown metric '%s'\n", rc->name, rc->metric);
+            printf("  %s[ERROR]%s %s%s%s: unknown metric '%s'\n",
+                   outc(CLR_RED), outc(CLR_RESET),
+                   outc(CLR_WHITE), rc->name, outc(CLR_RESET), rc->metric);
             continue;
         }
 
@@ -62,9 +99,13 @@ static void apply_config_rules(RuleEngine *engine, const Config *cfg)
         );
 
         if(ret == 0) {
-            printf("  [OK] %s (threshold: %.2f)\n", rc->name, rc->threshold);
+            printf("  %s[OK]%s   %s%s%s (threshold: %.2f)\n",
+                   outc(CLR_ORANGE), outc(CLR_RESET),
+                   outc(CLR_WHITE), rc->name, outc(CLR_RESET), rc->threshold);
         } else {
-            printf("  [FAIL] %s\n", rc->name);
+            printf("  %s[FAIL]%s %s%s%s\n",
+                   outc(CLR_RED), outc(CLR_RESET),
+                   outc(CLR_WHITE), rc->name, outc(CLR_RESET));
         }
     }
 
@@ -76,7 +117,8 @@ static void apply_config_rules(RuleEngine *engine, const Config *cfg)
  */
 static void collector_process(int write_fd, const Config *cfg)
 {
-    printf("[COLLECTOR] Starting collector process (PID: %d)\n", getpid());
+    printf("%scollector%s started (pid %d)\n",
+           outc(CLR_ORANGE), outc(CLR_RESET), getpid());
 
     Network_Snapshot *prev = NULL;
     int iteration = 0;
@@ -133,7 +175,7 @@ static void collector_process(int write_fd, const Config *cfg)
     }
 
     close(write_fd);
-    printf("[COLLECTOR] Collector process exiting\n");
+    printf("%scollector%s stopped\n", outc(CLR_ORANGE), outc(CLR_RESET));
 }
 
 /**
@@ -141,7 +183,8 @@ static void collector_process(int write_fd, const Config *cfg)
  */
 static void analyzer_process(int read_fd, const Config *cfg)
 {
-    printf("[ANALYZER] Starting analyzer process (PID: %d)\n", getpid());
+    printf("%sanalyzer%s started (pid %d)\n",
+           outc(CLR_ORANGE), outc(CLR_RESET), getpid());
 
     /* Create engines */
     RuleEngine *engine = rule_engine_create(cfg->rule_count + 5);
@@ -152,7 +195,8 @@ static void analyzer_process(int read_fd, const Config *cfg)
     apply_config_rules(engine, cfg);
 
     if(engine->rule_count == 0) {
-        printf("WARNING: No rules loaded from configuration\n");
+        printf("%swarning%s no rules loaded from configuration\n",
+               outc(CLR_ORANGE), outc(CLR_RESET));
     }
 
     int iteration = 0;
@@ -239,7 +283,8 @@ static void analyzer_process(int read_fd, const Config *cfg)
         }
 
         /* Display rates */
-        printf("[Iteration %d]\n", iteration);
+        printf("\n%s%sIteration %d%s\n",
+               outc(CLR_BOLD), outc(CLR_WHITE), iteration, outc(CLR_RESET));
         print_rate_snapshot(rate);
 
         /* Rule-based detection */
@@ -248,7 +293,8 @@ static void analyzer_process(int read_fd, const Config *cfg)
 
             if(alerts) {
                 if(alerts->count > 0) {
-                    printf("\n====== RULE ALERTS (%d) ======\n", alerts->count);
+                    printf("\n%s%sRULE ALERTS (%d)%s\n",
+                           outc(CLR_BOLD), outc(CLR_RED), alerts->count, outc(CLR_RESET));
                     print_alerts(alerts);
                     total_alerts += alerts->count;
                     
@@ -268,7 +314,8 @@ static void analyzer_process(int read_fd, const Config *cfg)
 
         if(anom) {
             if(anom->count > 0) {
-                printf("\n===== ANOMALY ALERTS (%d) =====\n", anom->count);
+                printf("\n%s%sANOMALY ALERTS (%d)%s\n",
+                       outc(CLR_BOLD), outc(CLR_RED), anom->count, outc(CLR_RESET));
                 print_alerts(anom);
                 total_alerts += anom->count;
                 
@@ -290,11 +337,10 @@ static void analyzer_process(int read_fd, const Config *cfg)
     }
 
     /* Cleanup */
-    printf("\n\n==========================================\n");
-    printf("[ANALYZER] Shutting down...\n");
-    printf("Total iterations: %d\n", iteration);
-    printf("Total alerts: %d\n", total_alerts);
-    printf("==========================================\n");
+    printf("\n\n%s%sShutdown summary%s\n",
+           outc(CLR_BOLD), outc(CLR_WHITE), outc(CLR_RESET));
+    printf("%siterations:%s %d\n", outc(CLR_ORANGE), outc(CLR_RESET), iteration);
+    printf("%salerts:%s     %d\n", outc(CLR_ORANGE), outc(CLR_RESET), total_alerts);
 
     if(metrics) {
         metrics_server_destroy(metrics);
@@ -317,21 +363,20 @@ int main(int argc, char *argv[])
     /* Load configuration */
     Config *cfg = config_load(config_file);
     if(!cfg) {
-        fprintf(stderr, "ERROR: Failed to load configuration\n");
+        fprintf(stderr, "%sERROR%s failed to load configuration\n",
+                errc(CLR_RED), errc(CLR_RESET));
         return EXIT_FAILURE;
     }
 
     /* Initialize logging */
     log_init(cfg->log_level);
 
-    printf("\n");
-    printf("==========================================\n");
-    printf("  NETWORK IDS - PHASE 6\n");
-    printf("  Multi-Process Architecture\n");
-    printf("==========================================\n");
-    printf("Config file: %s\n", config_file);
-    printf("Sampling interval: %d seconds\n", cfg->sampling_interval);
-    printf("Log level: %d\n", cfg->log_level);
+    printf("\n%s%sNetwork IDS%s\n", outc(CLR_BOLD), outc(CLR_WHITE), outc(CLR_RESET));
+    printf("%smulti-process mode%s\n\n", outc(CLR_WHITE), outc(CLR_RESET));
+
+    printf("%sconfig:%s   %s\n", outc(CLR_ORANGE), outc(CLR_RESET), config_file);
+    printf("%ssampling:%s %d seconds\n", outc(CLR_ORANGE), outc(CLR_RESET), cfg->sampling_interval);
+    printf("%slog:%s      level %d\n", outc(CLR_ORANGE), outc(CLR_RESET), cfg->log_level);
 
     struct sigaction sa;
     sa.sa_handler = handle_signal;
@@ -345,7 +390,8 @@ int main(int argc, char *argv[])
     /* Create pipe for IPC */
     int pipe_fd[2];
     if(pipe(pipe_fd) == -1) {
-        perror("Failed to create pipe");
+        fprintf(stderr, "%sERROR%s failed to create pipe: %s\n",
+                errc(CLR_RED), errc(CLR_RESET), strerror(errno));
         config_destroy(cfg);
         return EXIT_FAILURE;
     }
@@ -353,7 +399,8 @@ int main(int argc, char *argv[])
     /* Fork processes */
     pid_t pid = fork();
     if(pid < 0) {
-        perror("Failed to fork");
+        fprintf(stderr, "%sERROR%s failed to fork: %s\n",
+                errc(CLR_RED), errc(CLR_RESET), strerror(errno));
         close(pipe_fd[0]);
         close(pipe_fd[1]);
         config_destroy(cfg);
@@ -380,9 +427,14 @@ int main(int argc, char *argv[])
         int status;
         waitpid(pid, &status, 0);
         if(WIFEXITED(status)) {
-            printf("[MAIN] Collector process exited with status %d\n", WEXITSTATUS(status));
+            int code = WEXITSTATUS(status);
+            printf("%scollector%s exited with status %s%d%s\n",
+                   outc(CLR_ORANGE), outc(CLR_RESET),
+                   (code == 0 ? outc(CLR_WHITE) : outc(CLR_RED)), code, outc(CLR_RESET));
         } else if(WIFSIGNALED(status)) {
-            printf("[MAIN] Collector process terminated by signal %d\n", WTERMSIG(status));
+            printf("%scollector%s terminated by signal %s%d%s\n",
+                   outc(CLR_ORANGE), outc(CLR_RESET),
+                   outc(CLR_RED), WTERMSIG(status), outc(CLR_RESET));
         }
     }
 

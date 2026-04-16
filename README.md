@@ -9,7 +9,7 @@ git clone <repository>
 cd network-ids
 mkdir build && cd build && cmake .. && make
 ./ids ../ids.conf
-curl http://localhost:9101/metrics
+curl http://localhost:9090/metrics
 ```
 
 ## ✨ Features
@@ -55,7 +55,7 @@ docker run --cap-add=NET_ADMIN --net=host -v $(pwd)/logs:/app/logs network-ids
 ### Configuration (ids.conf)
 ```json
 {
-  "settings": {"interval": 2, "log_level": 1, "metrics_port": 9101},
+  "settings": {"interval": 2, "log_level": 1, "metrics_port": 9090},
   "rules": [{"name": "HighRxBandwidth", "metric": "RX_BYTES", "threshold": 5000000}]
 }
 ```
@@ -76,10 +76,22 @@ ids_rule_alerts_total{rule="..."}      # Per-rule alerts
 ids_alert_frequency_histogram_bucket    # Alert distribution
 ```
 
-### Grafana Setup
-1. `curl http://localhost:9090/dashboard` → Copy JSON
-2. Grafana: **Create** → **Import** → Paste JSON
-3. Configure Prometheus datasource
+### Prometheus & Grafana
+
+```bash
+# Grafana UI: http://127.0.0.1:3000
+sudo systemctl start grafana-server
+
+# Prometheus UI: http://127.0.0.1:9091
+# (runs on 9091 to avoid clashing with IDS metrics on 9090)
+IDS_REPO=/absolute/path/to/this-repo
+cd /opt/prometheus
+./prometheus --config.file="$IDS_REPO/prometheus.yml" --web.listen-address=":9091"
+```
+
+Grafana:
+- **Connections → Data sources → Prometheus** → URL: `http://127.0.0.1:9091` → **Save & test**
+- **Dashboards → Import** → `curl http://127.0.0.1:9090/dashboard` (paste JSON)
 
 ## 🚀 Commands
 
